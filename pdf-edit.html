@@ -307,7 +307,8 @@
           ><button id="redoBtn">↷ Redo</button>
         </div>
         <div class="toolGroup">
-          <button data-tool="text">T Text</button
+          <button data-tool="editText">✎ Edit Existing Text</button
+          ><button data-tool="text">T Add Text</button
           ><button data-tool="link">🔗 Link</button
           ><button data-tool="formText">▤ Text field</button
           ><button data-tool="check">☑ Check</button
@@ -425,9 +426,12 @@
         pageRotations = {},
         undoHistory = {},
         redoHistory = {},
-        restoring = false;
+        restoring = false,
+        existingTextItems = [];
       const toolHints = {
         select: "Select an item to move, resize or edit it.",
+        editText:
+          "Click directly on existing PDF text, then type its replacement.",
         text: "Click on the PDF to add editable text.",
         link: "Click on the PDF to add a clickable link area, then enter its URL on the right.",
         formText: "Click to add a form-style text field.",
@@ -584,6 +588,26 @@
         pc.height = vp.height;
         await pg.render({ canvasContext: pc.getContext("2d"), viewport: vp })
           .promise;
+        const textContent = await pg.getTextContent();
+        existingTextItems = textContent.items
+          .filter((item) => item.str && item.str.trim())
+          .map((item) => {
+            const matrix = pdfjsLib.Util.transform(
+              vp.transform,
+              item.transform,
+            );
+            const fontSize = Math.max(8, Math.hypot(matrix[2], matrix[3]));
+            const style = textContent.styles[item.fontName] || {};
+            return {
+              text: item.str,
+              left: matrix[4],
+              top: matrix[5] - fontSize,
+              width: Math.max(item.width * zoom, fontSize * 0.6),
+              height: fontSize * 1.25,
+              fontSize,
+              fontFamily: style.fontFamily || "Arial",
+            };
+          });
         $("stage").style.width = vp.width + "px";
         $("stage").style.height = vp.height + "px";
         if (fcanvas) fcanvas.dispose();
@@ -617,6 +641,26 @@
         if (!fcanvas || tool === "select" || tool === "draw") return;
         const p = fcanvas.getPointer(opt.e),
           c = $("color").value;
+        if (tool === "editText") {
+          const candidates = existingTextItems.filter(
+            (item) =>
+              p.x >= item.left - 5 &&
+              p.x <= item.left + item.width + 5 &&
+              p.y >= item.top - 5 &&
+              p.y <= item.top + item.height + 5,
+          );
+          const item = candidates.sort(
+            (a, b) => a.width * a.height - b.width * b.height,
+          )[0];
+          if (!item) {
+            status(
+              "No editable text found here. Try clicking closer to the letters.",
+            );
+            return;
+          }
+          replaceExistingText(item);
+          return;
+        }
         let o;
         if (tool === "text")
           o = new fabric.IText("Type here", {
@@ -755,6 +799,42 @@
           setTool("select");
           updateProperties();
         }
+      }
+      function replaceExistingText(item) {
+        const replacement = prompt("Edit existing text:", item.text);
+        if (replacement === null || replacement === item.text) return;
+        const cover = new fabric.Rect({
+          left: item.left - 1,
+          top: item.top - 1,
+          width: item.width + 3,
+          height: item.height + 2,
+          fill: "#ffffff",
+          strokeWidth: 0,
+          itemType: "autoWhiteout",
+          selectable: true,
+        });
+        const text = new fabric.IText(replacement || " ", {
+          left: item.left,
+          top: item.top,
+          fontSize: item.fontSize,
+          fontFamily: item.fontFamily,
+          fill: $("color").value,
+          fontWeight: $("boldBtn").classList.contains("active")
+            ? "bold"
+            : "normal",
+          fontStyle: $("italicBtn").classList.contains("active")
+            ? "italic"
+            : "normal",
+          itemType: "editedText",
+        });
+        cover.set({ transparentCorners: false, cornerColor: "#2563eb" });
+        text.set({ transparentCorners: false, cornerColor: "#2563eb" });
+        fcanvas.add(cover);
+        fcanvas.add(text).setActiveObject(text);
+        saveState(true);
+        setTool("select");
+        updateProperties();
+        status("Existing text replaced — drag or resize it if needed");
       }
       function updateProperties() {
         const o = fcanvas?.getActiveObject();
