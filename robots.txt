@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://nitya-tools.vercel.app/sitemap.xml
+Sitemap: https://nityatools.vercel.app/sitemap.xml
